@@ -16,7 +16,7 @@ type EchoChamberAgent struct {
 	PAgent   goabm.FLWMAgenter  //physical agent
 	VAgent   goabm.GenericAgent //virtual agent
 	
-	Model *EchoChamberModel
+	Model *EchoChamberModel `json:"-"`
 }
 
 // returns the culture as a string
@@ -71,7 +71,6 @@ if diceb >= a.Model.PLookingForBlogs {
 }
 
 		// (ii) (a) selects a neighbor for cultural interaction
-
 		sim := a.Similarity(other)
 		if sim >= 0.99 {
 			// agents are already equal
@@ -109,10 +108,23 @@ func (a *EchoChamberAgent) Similarity(other *EchoChamberAgent) float32 {
 type MultilevelLandscape struct {
 	Base       goabm.Landscaper
 	Overlay goabm.Landscaper
+	PhysToVirtual map[goabm.AgentID]goabm.AgentID
+	VirtualToPhys map[goabm.AgentID]goabm.AgentID
 }
 
 func (ml *MultilevelLandscape) Init(arg goabm.Modeler) {
+/* ml.PhysToVirtual = make(map[goabm.AgentID]goabm.AgentID)
+  ml.VirtualToPhys = make(map[goabm.AgentID]goabm.AgentID)
+*/
 	ml.Base.Init(arg)
+	
+/*	// create a lookup table, so that every agent has a node in each world
+	for i, agent := range ml.Base.GetAgents() {
+	a := agent.(*EchoChamberAgent)
+	 newId := a.Seqnr + ml.Base.NAgents
+	 PhysToVirtual[a.Seqnr] = newID
+	 VirtualToPhys[newID] = a       .Seqnr
+	}*/
 }
 
 func (ml *MultilevelLandscape) GetAgents() []goabm.Agenter {
@@ -124,7 +136,9 @@ func (ml *MultilevelLandscape) GetAgentById(id goabm.AgentID) goabm.Agenter {
 }
 
 func (ml *MultilevelLandscape) Dump() []byte {
-	return ml.Base.Dump()
+
+return ml.Base.Dump()
+	//return []byte(string(ml.Base.Dump()) + "\n" + string(ml.Overlay.Dump()))
 }
 
 
@@ -155,6 +169,12 @@ func (m *EchoChamberModel) CreateAgent(agenter interface{}) goabm.Agenter {
 
 	agent := &EchoChamberAgent{PAgent: agenter.(goabm.FLWMAgenter), VAgent: goabm.GenericAgent{}}
 
+        agent.VAgent.ID = agenter.(*goabm.FLWMAgent).Seqnr + goabm.AgentID(m.Landscape.Base.(*goabm.FixedLandscapeWithMovement).NAgents)
+	
+	ol := m.Landscape.Overlay.(*goabm.NetworkLandscape)
+	ol.UserAgents = append(ol.UserAgents, agent)
+	ol.Agents = append(ol.Agents, agent.VAgent)
+		
 	f := make(Feature, m.Features)
 	for i := range f {
 		f[i] = rand.Intn(m.Traits)
@@ -167,7 +187,6 @@ func (m *EchoChamberModel) CreateAgent(agenter interface{}) goabm.Agenter {
 func (m *EchoChamberModel) LandscapeAction() {
 	m.PhysicalCultures = m.CountCultures(m.Landscape.Base)
 	m.VirtualCultures = m.CountCultures(m.Landscape.Overlay)
-
 }
 
 func (m *EchoChamberModel) CountCultures(ls goabm.Landscaper) int {
