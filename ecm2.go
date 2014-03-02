@@ -119,11 +119,8 @@ func (bs *BlogSubscription) UnreadBlogPost() *Comment {
 
 // Implementation of the Agent, cultural Traits are stored in features
 type EchoChamberAgent struct {
-
-	/*
-		OfflineChangeCounter uint
-		OnlineChangeCounter  uint
-	*/
+	OnlineInteraction  int
+	OfflineInteraction int
 
 	NInteractionF              float64
 	NDaysSinceLastInteractionF float64
@@ -200,7 +197,7 @@ func (a *EchoChamberAgent) PhysicalInteraction(other *EchoChamberAgent) {
 	// plain simple interaction
 	change := a.AgentInteraction(other)
 	if change {
-		a.Model.OfflineInteraction++
+		a.OfflineInteraction++
 	}
 	//fmt.Printf("after: %s", a.Culture())
 
@@ -265,7 +262,7 @@ func (a *EchoChamberAgent) ReadBlogs() {
 	change := a.FeatureInteraction(post.Message)
 
 	if change {
-		a.Model.OnlineInteraction++
+		a.OnlineInteraction++
 	}
 	// now we read some responses, if there are any
 	if len(post.Responses) == 0 {
@@ -439,6 +436,7 @@ type EchoChamberModel struct {
 	OfflineInteraction int
 
 	TotalBlogPosts int
+	TotalBlogs     int
 
 	Landscape goabm.Landscaper
 
@@ -457,7 +455,7 @@ type EchoChamberModel struct {
 	Steplength float64 `goabm:"hide"`
 	PVeloc     float64 `goabm:"hide"`
 
-	Blogger map[goabm.AgentID]*Blog
+	Blogger map[goabm.AgentID]*Blog `goabm:"hide"`
 }
 
 // helper function to determine the similarity between to features
@@ -533,11 +531,25 @@ func (a *EchoChamberModel) CreateAgent(agenter interface{}) goabm.Agenter {
 func (a *EchoChamberModel) LandscapeAction() {
 	a.Cultures = a.CountCultures()
 
+	a.TotalBlogs = len(a.Blogger)
 	posts := 0
 	for _, blog := range a.Blogger {
 		posts += len(blog.Posts)
 	}
-	a.TotalBlogPosts = posts
+
+	if posts > a.TotalBlogPosts {
+		//panic("ajlkajdas")
+		a.TotalBlogPosts = posts
+
+	}
+
+	for _, b := range *a.Landscape.GetAgents() {
+		eca := b.(*EchoChamberAgent)
+
+		a.OfflineInteraction += eca.OfflineInteraction
+		a.OnlineInteraction += eca.OnlineInteraction
+	}
+
 }
 
 func (a *EchoChamberModel) CountCultures() int {
@@ -600,13 +612,14 @@ func main() {
 	goabm.Init()
 
 	features := 5
-	size := 30
-	numAgents := 10
-	runs := 30
+	size := 10
+	numAgents := 5
+	runs := 50
+
 	probveloc := 0.15
 
-	steplength := 0.5
-	sight := 0.2
+	steplength := 1.5
+	sight := 1.0
 
 	POnline := 0.5
 	PLooking := 0.2
