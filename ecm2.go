@@ -454,6 +454,8 @@ type EchoChamberModel struct {
 	TotalComments      int
 	TotalBlogPosts     int
 	TotalBlogs         int
+	TotalEchoChambers  int
+	EchoChamberRatio   float64
 
 	//parameters
 	NTraits   int `goabm:"hide"` // don't show these in the stats'
@@ -550,13 +552,37 @@ func (a *EchoChamberModel) BlogStatistics() {
 	a.TotalBlogs = len(a.Blogger)
 	posts := 0
 	comments := 0
+	ec := 0
 	for _, blog := range a.Blogger {
 		posts += len(blog.Posts)
 		for _, p := range blog.Posts {
 			comments += len(p.Responses)
+			// calculate the similarity of each comment to the blog
+			approve := 0
+			for _, c := range p.Responses {
+				sim := a.Similarity(p.Message, c)
+				if sim > 0.50 {
+					approve++
+				}
+			}
+			if len(p.Responses) > 0 {
+				//avg := avgt / float64(len(p.Responses))
+				//fmt.Printf("avg: %f %f %d\n", avg, avgt, len(p.Responses))
+				approval := float64(approve / len(p.Responses))
+				if approval > 0.64 {
+					// we found an echo chamber
+					//fmt.Printf("approval: %f", approval)
+					ec++
+				}
+			}
 		}
 	}
 
+	a.TotalEchoChambers = ec
+
+	if a.TotalBlogs > 0 {
+		a.EchoChamberRatio = float64(a.TotalEchoChambers / a.TotalBlogs)
+	}
 	if comments > a.TotalComments {
 		a.TotalComments = comments
 	}
