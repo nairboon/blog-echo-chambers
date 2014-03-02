@@ -73,33 +73,41 @@ func (b *Blog) Publish(f Feature) {
 
 type BlogSubscription struct {
 	FollowedBlogs []*Blog
-	OurBlogCopy   []Blog
-	ReadPosts     map[int][]bool //blogid -> postid
+	ReadPosts     map[int]map[int]bool //blogid -> postid
 }
 
 func (bs *BlogSubscription) Subscribe(b *Blog) {
 	bs.FollowedBlogs = append(bs.FollowedBlogs, b)
+	bs.ReadPosts[b.ID] = make(map[int]bool, len(b.Posts))
 }
 
 func (bs *BlogSubscription) UnreadBlogPost() *Comment {
 	//possibleReads := make([]*Comment, 1)
 
+	//fmt.Printf("i follow: %d %v %v", len(bs.FollowedBlogs),
+	//	bs.FollowedBlogs, bs.ReadPosts)
 	var PostToRead *Comment
 	// foreach blog
 	for _, blog := range bs.FollowedBlogs {
 		// have we read it all?
-		if len(blog.Posts) == len(bs.ReadPosts[blog.ID]) {
+		if val, ok := bs.ReadPosts[blog.ID]; ok && len(blog.Posts) == len(val) {
 			//skip
 			continue
 		}
 
 		for j, post := range blog.Posts {
-			// is unread?
-			if !bs.ReadPosts[blog.ID][j] {
-				// mark as read
-				bs.ReadPosts[blog.ID][j] = true
-				PostToRead = &post
+
+			// is read?
+			//val :=
+			if bs.ReadPosts[blog.ID][j] {
+				continue
 			}
+
+			// mark as read
+			//fmt.Printf("read P %d %v", j, post)
+			bs.ReadPosts[blog.ID][j] = true
+			PostToRead = &post
+
 		}
 
 	}
@@ -143,6 +151,11 @@ type EchoChamberAgent struct {
 	Model            *EchoChamberModel `json:"-"`
 }
 
+// returns the culture as a string
+func (a *EchoChamberAgent) Culture() string {
+	return fmt.Sprintf("%v", a.Features)
+}
+
 func (a *EchoChamberAgent) ChangeFeatures(other Feature) {
 	for i := range a.Features {
 		if a.Features[i] != other[i] {
@@ -158,34 +171,48 @@ func (a *EchoChamberAgent) ChangeFeatures(other Feature) {
 	}
 }
 
-func (a *EchoChamberAgent) FeatureInteraction(other Feature) {
+// returns true if  a change happend
+func (a *EchoChamberAgent) FeatureInteraction(other Feature) bool {
 
 	sim := a.Similarity(other)
 
+	//fmt.Printf("sim: %f", sim)
 	if sim >= 0.99 {
 		// agents are already equal
-		return
+		return false
 	}
 	dice := rand.Float64()
 	//interact with sim% chance
 	if dice <= sim {
 		a.ChangeFeatures(other)
+		return true
 	}
-
+	return false
 }
 
-func (a *EchoChamberAgent) AgentInteraction(other *EchoChamberAgent) {
-	a.FeatureInteraction(other.Features)
+func (a *EchoChamberAgent) AgentInteraction(other *EchoChamberAgent) bool {
+	return a.FeatureInteraction(other.Features)
 }
 
 func (a *EchoChamberAgent) PhysicalInteraction(other *EchoChamberAgent) {
 
+	//fmt.Printf("before: %s", a.Culture())
 	// plain simple interaction
-	a.AgentInteraction(other)
+	change := a.AgentInteraction(other)
+	if change {
+		a.Model.OfflineInteraction++
+	}
+	//fmt.Printf("after: %s", a.Culture())
+
 }
 
 func (a *EchoChamberAgent) FindABlog() {
 	blog := a.Model.GoogleBlog(a.Features)
+	if blog == nil {
+		//panic("nil blog")
+		//fmt.Println("no blog found...")
+		return
+	}
 	a.MySubscriptions.Subscribe(blog)
 }
 
@@ -222,6 +249,10 @@ func (a *EchoChamberAgent) ReadBlogs() {
 		}
 	}
 
+	if len(a.MySubscriptions.FollowedBlogs) == 0 {
+		// still no blogs available?
+		return
+	}
 	// so we're subscribed to a bunch of blogs, let's pick a new post and read it
 	post := a.MySubscriptions.UnreadBlogPost()
 
@@ -231,9 +262,15 @@ func (a *EchoChamberAgent) ReadBlogs() {
 	}
 
 	//the post consists of a Feature and some responses
-	a.FeatureInteraction(post.Message)
+	change := a.FeatureInteraction(post.Message)
 
-	// now we read some responses
+	if change {
+		a.Model.OnlineInteraction++
+	}
+	// now we read some responses, if there are any
+	if len(post.Responses) == 0 {
+		return
+	}
 	numResponses := rand.Intn(len(post.Responses))
 	for i := 0; i < numResponses; i++ {
 		// and interact with them
@@ -259,16 +296,17 @@ func (a *EchoChamberAgent) VirtualInteraction() {
 			return
 		}
 
-	}
-
-	if goabm.RollDice(a.PWriteBlogPost) {
-		// we blog
-		a.WriteBlog()
-
 	} else {
-		// otherwiese read some blogs
-		a.ReadBlogs()
+		// we have a blog
+		if goabm.RollDice(a.PWriteBlogPost) {
+			// we blog
+			a.WriteBlog()
+			return
+		}
 	}
+
+	// otherwiese read some blogs
+	a.ReadBlogs()
 
 }
 
@@ -394,8 +432,13 @@ func (a *EchoChamberAgent) Similarity(other Feature) float64 {
 }
 
 type EchoChamberModel struct {
-	PhysicalCultures int
-	VirtualCultures  int
+
+	// stats
+	Cultures           int
+	OnlineInteraction  int
+	OfflineInteraction int
+
+	TotalBlogPosts int
 
 	Landscape goabm.Landscaper
 
@@ -431,7 +474,8 @@ func (e *EchoChamberModel) Similarity(first, other Feature) float64 {
 }
 
 func (e *EchoChamberModel) CreateBlog(a *EchoChamberAgent) *Blog {
-	e.Blogger[a.ID()] = &Blog{}
+	//fmt.Println("created blog")
+	e.Blogger[a.ID()] = &Blog{ID: len(e.Blogger)}
 	return e.Blogger[a.ID()]
 }
 
@@ -461,6 +505,8 @@ func (e *EchoChamberModel) GoogleBlog(f Feature) *Blog {
 
 func (e *EchoChamberModel) Init(l interface{}) {
 	e.Landscape = l.(goabm.Landscaper)
+
+	e.Blogger = make(map[goabm.AgentID]*Blog)
 }
 
 func (a *EchoChamberModel) CreateAgent(agenter interface{}) goabm.Agenter {
@@ -478,16 +524,24 @@ func (a *EchoChamberModel) CreateAgent(agenter interface{}) goabm.Agenter {
 	agent.PWriteBlogPost = a.PWriteBlogPost
 	agent.RSubscribedBlogs = a.RSubscribedBlogs
 
+	agent.MySubscriptions.ReadPosts = make(map[int]map[int]bool)
+	agent.MySubscriptions.FollowedBlogs = make([]*Blog, 0)
 	agent.Model = a
 	return agent
 }
 
 func (a *EchoChamberModel) LandscapeAction() {
-	//a.Cultures = a.CountCultures()
+	a.Cultures = a.CountCultures()
+
+	posts := 0
+	for _, blog := range a.Blogger {
+		posts += len(blog.Posts)
+	}
+	a.TotalBlogPosts = posts
 }
 
 func (a *EchoChamberModel) CountCultures() int {
-	/*cultures := make(map[string]int)
+	cultures := make(map[string]int)
 	for _, b := range *a.Landscape.GetAgents() {
 		a := b.(*EchoChamberAgent)
 		cul := a.Culture()
@@ -497,8 +551,7 @@ func (a *EchoChamberModel) CountCultures() int {
 			cultures[cul] = cultures[cul] + 1
 		}
 	}
-	return len(cultures)*/
-	return 1
+	return len(cultures)
 }
 
 type SimRes struct {
@@ -546,16 +599,18 @@ func main() {
 	//initialize the goabm library (logs & flags)
 	goabm.Init()
 
-	features := 15
-	size := 10
-	numAgents := 30
-	runs := 200
+	features := 5
+	size := 30
+	numAgents := 10
+	runs := 30
 	probveloc := 0.15
-	steplength := 0.2
-	sight := 1.0
+
+	steplength := 0.5
+	sight := 0.2
+
 	POnline := 0.5
 	PLooking := 0.2
-	traits := 10
+	traits := 5
 
 	PStartBlogging := 0.1
 	PWriteBlogPost := 0.2
