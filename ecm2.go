@@ -61,6 +61,10 @@ type Comment struct {
 	Responses []Feature
 }
 
+func (c *Comment) Respond(f Feature) {
+	c.Responses = append(c.Responses, f)
+}
+
 type Blog struct {
 	Posts     []Comment
 	Followers []goabm.AgentID
@@ -95,7 +99,7 @@ func (bs *BlogSubscription) UnreadBlogPost() *Comment {
 			continue
 		}
 
-		for j, post := range blog.Posts {
+		for j, _ := range blog.Posts {
 
 			// is read?
 			//val :=
@@ -106,7 +110,7 @@ func (bs *BlogSubscription) UnreadBlogPost() *Comment {
 			// mark as read
 			//fmt.Printf("read P %d %v", j, post)
 			bs.ReadPosts[blog.ID][j] = true
-			PostToRead = &post
+			PostToRead = &blog.Posts[j]
 
 		}
 
@@ -129,8 +133,10 @@ type EchoChamberAgent struct {
 	NMaxRelations              uint
 
 	// blogging parameters
-	PStartBlogging          float64    `goabm:"hide"`
-	PWriteBlogPost          float64    `goabm:"hide"`
+	PStartBlogging   float64 `goabm:"hide"`
+	PWriteBlogPost   float64 `goabm:"hide"`
+	PRespondBlogPost float64 `goabm:"hide"`
+
 	RSubscribedBlogs        IntRange   `goabm:"hide"`
 	RSimilarityConfortLevel FloatRange `goabm:"hide"`
 
@@ -222,10 +228,6 @@ func (a *EchoChamberAgent) WriteBlog() {
 	a.MyBlog.Publish(a.Features)
 }
 
-func (a *EchoChamberAgent) InteractWithComment(c Feature) {
-
-}
-
 func (a *EchoChamberAgent) ReadBlogs() {
 	// are we subscribed to any blgos?
 	numBlogs := len(a.MySubscriptions.FollowedBlogs)
@@ -265,13 +267,28 @@ func (a *EchoChamberAgent) ReadBlogs() {
 		a.OnlineInteraction++
 	}
 	// now we read some responses, if there are any
-	if len(post.Responses) == 0 {
-		return
+	if len(post.Responses) > 0 {
+
+		numResponses := rand.Intn(len(post.Responses))
+		for i := 0; i < numResponses; i++ {
+			// and interact with them
+			comment := post.Responses[i]
+			//read it
+			change := a.FeatureInteraction(comment)
+
+			if change {
+				a.OnlineInteraction++
+			}
+
+		}
 	}
-	numResponses := rand.Intn(len(post.Responses))
-	for i := 0; i < numResponses; i++ {
-		// and interact with them
-		a.InteractWithComment(post.Responses[i])
+
+	//fmt.Printf("r %f\n")
+
+	if goabm.RollDice(a.PRespondBlogPost) {
+		// write comment
+		post.Respond(a.Features)
+
 	}
 }
 
@@ -434,28 +451,28 @@ type EchoChamberModel struct {
 	Cultures           int
 	OnlineInteraction  int
 	OfflineInteraction int
-
-	TotalBlogPosts int
-	TotalBlogs     int
-
-	Landscape goabm.Landscaper
+	TotalComments      int
+	TotalBlogPosts     int
+	TotalBlogs         int
 
 	//parameters
 	NTraits   int `goabm:"hide"` // don't show these in the stats'
 	NFeatures int `goabm:"hide"`
-
-	POnline float64 `goabm:"hide"`
 
 	// blogging parameters
 	PStartBlogging          float64    `goabm:"hide"`
 	PWriteBlogPost          float64    `goabm:"hide"`
 	RSubscribedBlogs        IntRange   `goabm:"hide"`
 	RSimilarityConfortLevel FloatRange `goabm:"hide"`
+	PRespondBlogPost        float64    `goabm:"hide"`
 
+	//movement parameters
 	Steplength float64 `goabm:"hide"`
 	PVeloc     float64 `goabm:"hide"`
 
-	Blogger map[goabm.AgentID]*Blog `goabm:"hide"`
+	//datastructures
+	Blogger   map[goabm.AgentID]*Blog `goabm:"hide"`
+	Landscape goabm.Landscaper
 }
 
 // helper function to determine the similarity between to features
@@ -521,6 +538,7 @@ func (a *EchoChamberModel) CreateAgent(agenter interface{}) goabm.Agenter {
 	agent.PVeloc = a.PVeloc
 	agent.PWriteBlogPost = a.PWriteBlogPost
 	agent.RSubscribedBlogs = a.RSubscribedBlogs
+	agent.PRespondBlogPost = a.PRespondBlogPost
 
 	agent.MySubscriptions.ReadPosts = make(map[int]map[int]bool)
 	agent.MySubscriptions.FollowedBlogs = make([]*Blog, 0)
@@ -528,20 +546,36 @@ func (a *EchoChamberModel) CreateAgent(agenter interface{}) goabm.Agenter {
 	return agent
 }
 
-func (a *EchoChamberModel) LandscapeAction() {
-	a.Cultures = a.CountCultures()
-
+func (a *EchoChamberModel) BlogStatistics() {
 	a.TotalBlogs = len(a.Blogger)
 	posts := 0
+	comments := 0
 	for _, blog := range a.Blogger {
 		posts += len(blog.Posts)
+		for _, p := range blog.Posts {
+			comments += len(p.Responses)
+		}
+	}
+
+	if comments > a.TotalComments {
+		a.TotalComments = comments
 	}
 
 	if posts > a.TotalBlogPosts {
 		//panic("ajlkajdas")
 		a.TotalBlogPosts = posts
-
 	}
+
+	// analyze follower constitution
+	for _, blog := range a.Blogger {
+		posts += len(blog.Posts)
+	}
+}
+
+func (a *EchoChamberModel) LandscapeAction() {
+	a.BlogStatistics()
+
+	a.Cultures = a.CountCultures()
 
 	for _, b := range *a.Landscape.GetAgents() {
 		eca := b.(*EchoChamberAgent)
@@ -575,7 +609,8 @@ type SimRes struct {
 }
 
 func simRun(traits, features, size, numAgents, runs int,
-	probveloc, steplength, sight, POnline, PLooking, PStartBlogging, PWriteBlogPost float64,
+	probveloc, steplength, sight,
+	POnline, PLooking, PStartBlogging, PWriteBlogPost, PRespondBlogPost float64,
 	RSubscribedBlogs IntRange) SimRes {
 
 	model := &EchoChamberModel{
@@ -583,9 +618,9 @@ func simRun(traits, features, size, numAgents, runs int,
 		NFeatures:        features,
 		PVeloc:           probveloc,
 		Steplength:       steplength,
-		POnline:          POnline,
 		PStartBlogging:   PStartBlogging,
 		PWriteBlogPost:   PWriteBlogPost,
+		PRespondBlogPost: PRespondBlogPost,
 		RSubscribedBlogs: RSubscribedBlogs}
 
 	sim := &goabm.Simulation{Landscape: &goabm.FixedLandscapeWithMovement{Size: size, NAgents: numAgents, Sight: sight},
@@ -627,13 +662,14 @@ func main() {
 
 	PStartBlogging := 0.1
 	PWriteBlogPost := 0.2
+	PRespondBlogPost := 1.0
 	RSubscribedBlogs := IntRange{1, 5}
 
 	//fmt.Printf("#Parameter search...\n");
 
 	r := simRun(traits, features, size, numAgents, runs,
 		probveloc, steplength, sight, POnline, PLooking,
-		PStartBlogging, PWriteBlogPost, RSubscribedBlogs)
+		PStartBlogging, PWriteBlogPost, PRespondBlogPost, RSubscribedBlogs)
 
 	fmt.Printf("%d, %d, %d, %d, %d, %f, %f\n", traits, features, r.CultureDiff, r.OnlineCultures, r.OfflineCultures, r.AvgOnline, r.AvgOffline)
 	/*
