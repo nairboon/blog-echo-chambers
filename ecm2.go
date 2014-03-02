@@ -50,6 +50,7 @@ package main
 import "goabm"
 import "fmt"
 import "math/rand"
+import "math"
 
 type Feature []int
 
@@ -637,11 +638,11 @@ func (a *EchoChamberModel) CountCultures() int {
 }
 
 type SimRes struct {
-	AvgOnline       float64
-	AvgOffline      float64
-	CultureDiff     int
-	OnlineCultures  int
-	OfflineCultures int
+	Cultures           int
+	OnlineInteraction  int
+	OfflineInteraction int
+	TotalEchoChambers  int
+	EchoChamberRatio   float64
 }
 
 func simRun(traits, features, size, numAgents, runs int,
@@ -660,7 +661,7 @@ func simRun(traits, features, size, numAgents, runs int,
 		RSubscribedBlogs: RSubscribedBlogs}
 
 	sim := &goabm.Simulation{Landscape: &goabm.FixedLandscapeWithMovement{Size: size, NAgents: numAgents, Sight: sight},
-		Model: model, Log: goabm.Logger{StdOut: true}}
+		Model: model, Log: goabm.Logger{StdOut: false}}
 	sim.Init()
 	for i := 0; i < runs; i++ {
 		//fmt.Printf("Step #%d, Events:%d, Cultures:%d\n", i, sim.Stats.Events, model.Cultures)
@@ -674,21 +675,119 @@ func simRun(traits, features, size, numAgents, runs int,
 	}
 	sim.Stop()
 
-	return SimRes{}
-
+	return SimRes{Cultures: model.Cultures,
+		OnlineInteraction:  model.OnlineInteraction,
+		OfflineInteraction: model.OfflineInteraction,
+		TotalEchoChambers:  model.TotalEchoChambers,
+		EchoChamberRatio:   model.EchoChamberRatio}
 }
 
-func main() {
-	//initialize the goabm library (logs & flags)
-	goabm.Init()
+type DiscreteVarWithLimit struct {
+	Var float64
+	Min float64
+	Max float64
+}
+
+type Parameters struct {
+	Probabilities []float64
+	Discrete      []DiscreteVarWithLimit
+}
+
+type TargetFunction interface {
+	Run(Parameters) float64
+}
+
+type SimulatedAnnealing struct {
+	TF TargetFunction
+
+	Parameters
+	Temp        float64
+	KMax        int
+	CoolingRate float64
+}
+
+type SAResult struct {
+	Parameters
+	Energy float64
+
+	Temperature float64
+	Iterations  int
+}
+
+func (sa *SimulatedAnnealing) Neighbour(p Parameters) Parameters {
+
+	yj := 0.05
+
+	for i, v := range p.Probabilities {
+
+		x2 := goabm.Random(v-yj, v+yj)
+		if x2 > 1.0 {
+			x2 = 1.0
+		}
+
+		if x2 < 0.0 {
+			x2 = 0.0
+		}
+		p.Probabilities[i] = x2
+	}
+
+	return p
+}
+
+func (sa *SimulatedAnnealing) P(energy, newenergy, temperature float64) float64 {
+	if newenergy < energy {
+		return 1.0
+	}
+	return math.Exp((energy - newenergy) / temperature)
+}
+
+func (sa *SimulatedAnnealing) Run() SAResult {
+
+	s := sa.Parameters
+	e := sa.TF.Run(s)
+
+	sbest := s
+	ebest := e
+	k := 0
+	for k < sa.KMax && sa.Temp > 1 {
+		sa.Temp *= 1.0 - sa.CoolingRate
+
+		snew := sa.Neighbour(s)
+		enew := sa.TF.Run(snew)
+		//fmt.Printf("p: %f\n", sa.P(e, enew, sa.Temp))
+		if sa.P(e, enew, sa.Temp) > rand.Float64() {
+			s = snew
+			e = enew
+		}
+
+		if enew < ebest {
+			//fmt.Printf("new best")
+			sbest = snew
+			ebest = enew
+		}
+		k++
+	}
+	//fmt.Printf("Ener %f", ebest)
+	return SAResult{Parameters: sbest, Energy: ebest,
+		Temperature: sa.Temp, Iterations: k}
+}
+
+type MyTarget struct {
+}
+
+func (tf MyTarget) Run(p Parameters) float64 {
+
+	fmt.Printf("run with params: %v\n", p)
+	PStartBlogging := p.Probabilities[0]
+	PWriteBlogPost := p.Probabilities[1]
+	PRespondBlogPost := p.Probabilities[2]
 
 	features := 5
 	size := 20
 	numAgents := 30
-	runs := 300
+	runs := 100
 
 	probveloc := 0.15
-
 	steplength := 1.5
 	sight := 1.0
 
@@ -696,31 +795,46 @@ func main() {
 	PLooking := 0.2
 	traits := 5
 
-	PStartBlogging := 0.1
-	PWriteBlogPost := 0.2
-	PRespondBlogPost := 1.0
 	RSubscribedBlogs := IntRange{1, 5}
-
-	//fmt.Printf("#Parameter search...\n");
 
 	r := simRun(traits, features, size, numAgents, runs,
 		probveloc, steplength, sight, POnline, PLooking,
 		PStartBlogging, PWriteBlogPost, PRespondBlogPost, RSubscribedBlogs)
 
-	fmt.Printf("%d, %d, %d, %d, %d, %f, %f\n", traits, features, r.CultureDiff, r.OnlineCultures, r.OfflineCultures, r.AvgOnline, r.AvgOffline)
+	ratio := r.EchoChamberRatio
+	target := 3.5
+
+	score := math.Abs(target - ratio)
+	return score
+}
+
+func main() {
+	//initialize the goabm library (logs & flags)
+	goabm.Init()
+
 	/*
-		Min1 := 10;
-		Max1 := 10;
+	    combine MC with Sa?
+	   inner loop is MC sampling?
+	*/
+	//fmt.Printf("#Parameter search...\n");
 
-		Min2 := 10;
-		Max2 := 10;
+	//fmt.Printf("%d, %d, %d, %d, %d, %f, %f\n", traits, features, r.CultureDiff, r.OnlineCultures, r.OfflineCultures, r.AvgOnline, r.AvgOffline)
 
-		fmt.Printf("traits,f, cdiff,onc,offc,avgon,avgoff\n")
-		for i:= Min1; i< Max1; i++ {
-		for j:= Min2; j< Max2; j++ {
+	PStartBlogging := 0.1
+	PWriteBlogPost := 0.2
+	PRespondBlogPost := 1.0
 
-		r := simRun(i, features, size, numAgents, runs, FollowedBlogs, probveloc, steplength, sight,POnline,PLooking)
+	mt := MyTarget{}
+	// simulated annealing
+	p := Parameters{
+		Probabilities: []float64{PStartBlogging,
+			PWriteBlogPost,
+			PRespondBlogPost},
+	}
 
-		fmt.Printf("%d, %d, %d, %d, %d, %f, %f\n",i,j, r.CultureDiff, r.OnlineCultures, r.OfflineCultures,r.AvgOnline,r.AvgOffline)
-		} }*/
+	sa := SimulatedAnnealing{Temp: 100, CoolingRate: 0.01, KMax: 600}
+	sa.Parameters = p
+	sa.TF = mt
+	r := sa.Run()
+	fmt.Printf("best score %f for %v\n", r.Energy, r)
 }
