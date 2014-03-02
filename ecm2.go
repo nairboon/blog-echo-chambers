@@ -491,8 +491,10 @@ func (e *EchoChamberModel) Similarity(first, other Feature) float64 {
 }
 
 func (e *EchoChamberModel) CreateBlog(a *EchoChamberAgent) *Blog {
-	//fmt.Println("created blog")
+	//e.Blogger = append(e.Blogger, )
 	e.Blogger[a.ID()] = &Blog{ID: len(e.Blogger)}
+	//fmt.Printf("%d created blog %d\n", a.ID(), len(e.Blogger))
+
 	return e.Blogger[a.ID()]
 }
 
@@ -549,31 +551,38 @@ func (a *EchoChamberModel) CreateAgent(agenter interface{}) goabm.Agenter {
 }
 
 func (a *EchoChamberModel) BlogStatistics() {
+
 	a.TotalBlogs = len(a.Blogger)
 	posts := 0
 	comments := 0
 	ec := 0
 	for _, blog := range a.Blogger {
 		posts += len(blog.Posts)
+
+		approve := 0
+		totalresp := 0
 		for _, p := range blog.Posts {
 			comments += len(p.Responses)
 			// calculate the similarity of each comment to the blog
-			approve := 0
+
 			for _, c := range p.Responses {
 				sim := a.Similarity(p.Message, c)
 				if sim > 0.50 {
 					approve++
 				}
+				totalresp++
 			}
-			if len(p.Responses) > 0 {
-				//avg := avgt / float64(len(p.Responses))
-				//fmt.Printf("avg: %f %f %d\n", avg, avgt, len(p.Responses))
-				approval := float64(approve / len(p.Responses))
-				if approval > 0.64 {
-					// we found an echo chamber
-					//fmt.Printf("approval: %f", approval)
-					ec++
-				}
+
+		}
+
+		if totalresp > 0 {
+			//avg := avgt / float64(len(p.Responses))
+			//fmt.Printf("avg: %f %f %d\n", avg, avgt, len(p.Responses))
+			approval := float64(approve / totalresp)
+			if approval > 0.64 {
+				// we found an echo chamber
+				//fmt.Printf("approval: %f", approval)
+				ec++
 			}
 		}
 	}
@@ -581,7 +590,8 @@ func (a *EchoChamberModel) BlogStatistics() {
 	a.TotalEchoChambers = ec
 
 	if a.TotalBlogs > 0 {
-		a.EchoChamberRatio = float64(a.TotalEchoChambers / a.TotalBlogs)
+		a.EchoChamberRatio = float64(a.TotalEchoChambers) / float64(a.TotalBlogs)
+		//fmt.Printf("alkda %d   %d  %f\n", a.TotalEchoChambers, a.TotalBlogs, a.EchoChamberRatio)
 	}
 	if comments > a.TotalComments {
 		a.TotalComments = comments
@@ -673,9 +683,9 @@ func main() {
 	goabm.Init()
 
 	features := 5
-	size := 10
-	numAgents := 5
-	runs := 50
+	size := 20
+	numAgents := 30
+	runs := 300
 
 	probveloc := 0.15
 
