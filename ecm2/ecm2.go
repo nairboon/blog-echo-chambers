@@ -51,6 +51,8 @@ import "goabm"
 import "fmt"
 import "math/rand"
 import "math"
+import "time"
+import "github.com/GaryBoone/GoStats/stats"
 
 type Feature []int
 
@@ -137,6 +139,7 @@ type EchoChamberAgent struct {
 	PStartBlogging   float64 `goabm:"hide"`
 	PWriteBlogPost   float64 `goabm:"hide"`
 	PRespondBlogPost float64 `goabm:"hide"`
+	POnline float64 `goabm:"hide"`
 
 	RSubscribedBlogs        IntRange   `goabm:"hide"`
 	RSimilarityConfortLevel FloatRange `goabm:"hide"`
@@ -336,15 +339,23 @@ func (a *EchoChamberAgent) Act() {
 	}
 
 	//l := a.Model.Landscape.(*goabm.FixedLandscapeWithMovement)
-	// check if we have agent around
+	/*// check if we have agent around
 	other := a.GetRandomNeighbor()
 	if other != nil {
 		a.PhysicalInteraction(other.(*EchoChamberAgent))
 	} else {
 		// go online otherwise
 		a.VirtualInteraction()
-	}
+	}*/
 
+        if goabm.RollDice(a.POnline) {
+        a.VirtualInteraction()
+        } else {
+        other := a.GetRandomNeighbor()
+	if other != nil {
+		a.PhysicalInteraction(other.(*EchoChamberAgent))
+	}
+        }
 	/*
 
 	    var OtherIsOnline bool;
@@ -468,6 +479,8 @@ type EchoChamberModel struct {
 	RSubscribedBlogs        IntRange   `goabm:"hide"`
 	RSimilarityConfortLevel FloatRange `goabm:"hide"`
 	PRespondBlogPost        float64    `goabm:"hide"`
+	
+	POnline          float64    `goabm:"hide"`
 
 	//movement parameters
 	Steplength float64 `goabm:"hide"`
@@ -544,6 +557,7 @@ func (a *EchoChamberModel) CreateAgent(agenter interface{}) goabm.Agenter {
 	agent.PWriteBlogPost = a.PWriteBlogPost
 	agent.RSubscribedBlogs = a.RSubscribedBlogs
 	agent.PRespondBlogPost = a.PRespondBlogPost
+	agent.POnline = a.POnline
 
 	agent.MySubscriptions.ReadPosts = make(map[int]map[int]bool)
 	agent.MySubscriptions.FollowedBlogs = make([]*Blog, 0)
@@ -643,6 +657,7 @@ type SimRes struct {
 	OfflineInteraction int
 	TotalEchoChambers  int
 	EchoChamberRatio   float64
+	Events int
 }
 
 func simRun(traits, features, size, numAgents, runs int,
@@ -658,11 +673,17 @@ func simRun(traits, features, size, numAgents, runs int,
 		PStartBlogging:   PStartBlogging,
 		PWriteBlogPost:   PWriteBlogPost,
 		PRespondBlogPost: PRespondBlogPost,
-		RSubscribedBlogs: RSubscribedBlogs}
+		RSubscribedBlogs: RSubscribedBlogs,
+		POnline: POnline}
 
 	sim := &goabm.Simulation{Landscape: &goabm.FixedLandscapeWithMovement{Size: size, NAgents: numAgents, Sight: sight},
 		Model: model, Log: goabm.Logger{StdOut: false}}
 	sim.Init()
+
+	nvar := 100
+	r:= make([]float64,runs)
+	//last := 9.0
+	
 	for i := 0; i < runs; i++ {
 		//fmt.Printf("Step #%d, Events:%d, Cultures:%d\n", i, sim.Stats.Events, model.Cultures)
 		/*if model.Cultures == 1 {
@@ -671,7 +692,25 @@ func simRun(traits, features, size, numAgents, runs int,
 				break
 			}*/
 		sim.Step()
-
+                t := model.EchoChamberRatio
+              
+                        //last = t
+                        r[i] = t
+                        //fmt.Printf("%d %f %d\n",c,t,runs)
+                
+                // check for variance in last N steps
+                if i > nvar {
+                 slidingWindow := r[i-nvar:i]
+                 variance := stats.StatsSampleVariance(slidingWindow)
+                 //fmt.Printf("%f\n",variance)
+                 
+                 // if we have such a smal variance the model is considered
+                 // stable and we abort computation here to save cpu resources
+                 if variance < 0.000001 {
+                 //fmt.Printf("stop it at %d %f\n",i, variance)
+                 break
+                 }
+                }
 	}
 	sim.Stop()
 
@@ -679,7 +718,8 @@ func simRun(traits, features, size, numAgents, runs int,
 		OnlineInteraction:  model.OnlineInteraction,
 		OfflineInteraction: model.OfflineInteraction,
 		TotalEchoChambers:  model.TotalEchoChambers,
-		EchoChamberRatio:   model.EchoChamberRatio}
+		EchoChamberRatio:   model.EchoChamberRatio,
+		Events: sim.Stats.Events}
 }
 
 type DiscreteVarWithLimit struct {
@@ -697,115 +737,92 @@ type TargetFunction interface {
 	Run(Parameters) float64
 }
 
-type SimulatedAnnealing struct {
-	TF TargetFunction
-
-	Parameters
-	Temp        float64
-	KMax        int
-	CoolingRate float64
-}
-
-type SAResult struct {
-	Parameters
-	Energy float64
-
-	Temperature float64
-	Iterations  int
-}
-
-func (sa *SimulatedAnnealing) Neighbour(p Parameters) Parameters {
-
-	yj := 0.05
-
-	for i, v := range p.Probabilities {
-
-		x2 := goabm.Random(v-yj, v+yj)
-		if x2 > 1.0 {
-			x2 = 1.0
-		}
-
-		if x2 < 0.0 {
-			x2 = 0.0
-		}
-		p.Probabilities[i] = x2
-	}
-
-	return p
-}
-
-func (sa *SimulatedAnnealing) P(energy, newenergy, temperature float64) float64 {
-	if newenergy < energy {
-		return 1.0
-	}
-	return math.Exp((energy - newenergy) / temperature)
-}
-
-func (sa *SimulatedAnnealing) Run() SAResult {
-
-	s := sa.Parameters
-	e := sa.TF.Run(s)
-
-	sbest := s
-	ebest := e
-	k := 0
-	for k < sa.KMax && sa.Temp > 1 {
-		sa.Temp *= 1.0 - sa.CoolingRate
-
-		snew := sa.Neighbour(s)
-		enew := sa.TF.Run(snew)
-		//fmt.Printf("p: %f\n", sa.P(e, enew, sa.Temp))
-		if sa.P(e, enew, sa.Temp) > rand.Float64() {
-			s = snew
-			e = enew
-		}
-
-		if enew < ebest {
-			//fmt.Printf("new best")
-			sbest = snew
-			ebest = enew
-		}
-		k++
-	}
-	//fmt.Printf("Ener %f", ebest)
-	return SAResult{Parameters: sbest, Energy: ebest,
-		Temperature: sa.Temp, Iterations: k}
-}
 
 type MyTarget struct {
 }
 
 func (tf MyTarget) Run(p Parameters) float64 {
 
-	fmt.Printf("run with params: %v\n", p)
-	PStartBlogging := p.Probabilities[0]
-	PWriteBlogPost := p.Probabilities[1]
-	PRespondBlogPost := p.Probabilities[2]
+        /*if len(p.Probabilities) != 3 {
+        fmt.Printf("%v",p)
+        //return 100.0
+        panic("len is not 3")
+        }*/
+	//PStartBlogging := p.Probabilities[0]
+	PWriteBlogPost := p.Probabilities[0]
+	PRespondBlogPost := p.Probabilities[1]
 
-	features := 5
-	size := 20
-	numAgents := 30
-	runs := 100
+	POnline := p.Probabilities[1]
+	
+PStartBlogging := 0.1
+
+
+	features := 20
+	traits := 50
+	size := 30
+	numAgents := 10
+	runs := 1000
 
 	probveloc := 0.15
 	steplength := 1.5
 	sight := 1.0
 
-	POnline := 0.5
+
 	PLooking := 0.2
-	traits := 5
+
 
 	RSubscribedBlogs := IntRange{1, 5}
 
+        innerRuns := 5
+        
+        scoreSum := 0.0
+        l := make([]float64,innerRuns)
+        
+        tevents := 0
+        start := time.Now()
+        for i:=0;i<innerRuns;i++ {
+        
+        
 	r := simRun(traits, features, size, numAgents, runs,
 		probveloc, steplength, sight, POnline, PLooking,
 		PStartBlogging, PWriteBlogPost, PRespondBlogPost, RSubscribedBlogs)
 
 	ratio := r.EchoChamberRatio
-	target := 3.5
+	target := 0.64
 
+        tevents += r.Events
 	score := math.Abs(target - ratio)
-	return score
+        scoreSum+=score
+        l[i] = score
+        	//fmt.Printf("score: %f  ratio: %f\n", score, ratio)
+        }
+        usedTime := time.Since(start)
+        eps := float64(tevents) / usedTime.Seconds()
+        fmt.Printf("%f events/s\t",eps)
+	return scoreSum / float64(innerRuns)
+}
+
+func samplePS(initial Parameters, resolution float64) []Parameters {
+	/* PS_probabilities = 1/resolution^N */
+	n := 1.0 / resolution
+
+	res := make([]Parameters, int(math.Pow(n+1, 3)))
+	//fmt.Printf("n: %f l: %d", n, len(res))
+	c := 0
+	for i := initial.Probabilities[0]; i < 1.0; i += resolution {
+		for j := initial.Probabilities[1]; j < 1.0; j += resolution {
+			for k := initial.Probabilities[2]; k < 1.0; k += resolution {
+				/*res[c].Probabilities[0] = i
+				res[c].Probabilities[1] = j
+
+				res[c].Probabilities[2] = k*/
+				//fmt.Printf("c: %d, i:%f j:%f, k:%f\n", c, i, j, k)
+				res[c].Probabilities = []float64{i, j,k}
+				c++
+			}
+		}
+	}
+	return res[:c]
 }
 
 func main() {
@@ -819,22 +836,44 @@ func main() {
 	//fmt.Printf("#Parameter search...\n");
 
 	//fmt.Printf("%d, %d, %d, %d, %d, %f, %f\n", traits, features, r.CultureDiff, r.OnlineCultures, r.OfflineCultures, r.AvgOnline, r.AvgOffline)
+	/*
+		PStartBlogging := 0.005
+		PWriteBlogPost := 0.2
+		PRespondBlogPost := 0.1
+	*/
+	/*
+		// simulated annealing
+		p := Parameters{
+			Probabilities: []float64{PStartBlogging,
+				PWriteBlogPost,
+				PRespondBlogPost},
+		}
 
-	PStartBlogging := 0.1
-	PWriteBlogPost := 0.2
-	PRespondBlogPost := 1.0
+		sa := SimulatedAnnealing{Temp: 100, CoolingRate: 0.01, KMax: 400}
+		sa.Parameters = p
+		sa.TF = mt
+		r := sa.Run()
+		fmt.Printf("best score %f for %v\n", r.Energy, r)*/
 
+	p := Parameters{Probabilities: []float64{0.1, 0.1, 0.1}}
+	// parameter search
+	resolution := 0.6
+
+	pars := samplePS(p, resolution)
+	fmt.Printf("size of ps: %d", len(pars))
 	mt := MyTarget{}
-	// simulated annealing
-	p := Parameters{
-		Probabilities: []float64{PStartBlogging,
-			PWriteBlogPost,
-			PRespondBlogPost},
-	}
+	// run model for each parameter
+	fmt.Printf("run, score, writepost, respond, ponline\n")
+	for i, p := range pars {
 
-	sa := SimulatedAnnealing{Temp: 100, CoolingRate: 0.01, KMax: 600}
-	sa.Parameters = p
-	sa.TF = mt
-	r := sa.Run()
-	fmt.Printf("best score %f for %v\n", r.Energy, r)
+                /*if 0 == p.Probabilities[0] {
+		continue
+		}*/
+		r := mt.Run(p)
+		
+		fmt.Printf("%d,\t %f,\t %f,\t %f,\t %f\n", i, r, p.Probabilities[0],
+p.Probabilities[1],
+p.Probabilities[2],		)
+
+	}
 }
