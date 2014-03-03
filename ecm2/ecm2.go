@@ -51,7 +51,8 @@ import "goabm"
 import "fmt"
 import "math/rand"
 import "math"
-import "time"
+//import "time"
+import "runtime"
 import "github.com/GaryBoone/GoStats/stats"
 
 type Feature []int
@@ -663,7 +664,8 @@ type SimRes struct {
 func simRun(traits, features, size, numAgents, runs int,
 	probveloc, steplength, sight,
 	POnline, PLooking, PStartBlogging, PWriteBlogPost, PRespondBlogPost float64,
-	RSubscribedBlogs IntRange) SimRes {
+	RSubscribedBlogs IntRange,
+	ret chan SimRes) {
 
 	model := &EchoChamberModel{
 		NTraits:          traits,
@@ -714,7 +716,7 @@ func simRun(traits, features, size, numAgents, runs int,
 	}
 	sim.Stop()
 
-	return SimRes{Cultures: model.Cultures,
+	ret <- SimRes{Cultures: model.Cultures,
 		OnlineInteraction:  model.OnlineInteraction,
 		OfflineInteraction: model.OfflineInteraction,
 		TotalEchoChambers:  model.TotalEchoChambers,
@@ -773,20 +775,38 @@ PStartBlogging := 0.1
 
 	RSubscribedBlogs := IntRange{1, 5}
 
-        innerRuns := 5
-        
+        NCPU := 1
+        innerRuns := NCPU * 4 // multiple of NCPU!
+        runtime.GOMAXPROCS(NCPU)
         scoreSum := 0.0
         l := make([]float64,innerRuns)
         
         tevents := 0
-        start := time.Now()
+        //start := time.Now()
+        
+        
+        
+        resc := make( chan SimRes, NCPU)
+        
+        //dispatch workers
+        i:=0
+        for i<innerRuns {
+                for j:=0;j<NCPU;j++ {
+                        i++
+                       go simRun(traits, features, size, numAgents, runs,
+		probveloc, steplength, sight, POnline, PLooking,
+		PStartBlogging, PWriteBlogPost, PRespondBlogPost, RSubscribedBlogs,
+		resc)
+
+                }
+        }
+        
+
         for i:=0;i<innerRuns;i++ {
         
-        
-	r := simRun(traits, features, size, numAgents, runs,
-		probveloc, steplength, sight, POnline, PLooking,
-		PStartBlogging, PWriteBlogPost, PRespondBlogPost, RSubscribedBlogs)
-
+        // collect results
+	r := <- resc
+	
 	ratio := r.EchoChamberRatio
 	target := 0.64
 
@@ -796,9 +816,9 @@ PStartBlogging := 0.1
         l[i] = score
         	//fmt.Printf("score: %f  ratio: %f\n", score, ratio)
         }
-        usedTime := time.Since(start)
+       /* usedTime := time.Since(start)
         eps := float64(tevents) / usedTime.Seconds()
-        fmt.Printf("%f events/s\t",eps)
+        fmt.Printf("%f events/s\t",eps)*/
 	return scoreSum / float64(innerRuns)
 }
 
@@ -857,7 +877,7 @@ func main() {
 
 	p := Parameters{Probabilities: []float64{0.1, 0.1, 0.1}}
 	// parameter search
-	resolution := 0.6
+	resolution := 0.2
 
 	pars := samplePS(p, resolution)
 	fmt.Printf("size of ps: %d", len(pars))
