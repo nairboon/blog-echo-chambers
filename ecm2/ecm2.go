@@ -42,7 +42,6 @@ agent loop
                 * read postings
                 * comment
 
-
 */
 
 package main
@@ -51,6 +50,7 @@ import "goabm"
 import "fmt"
 import "math/rand"
 import "math"
+
 //import "time"
 import "runtime"
 import "github.com/GaryBoone/GoStats/stats"
@@ -80,13 +80,31 @@ func (b *Blog) Publish(f Feature) {
 }
 
 type BlogSubscription struct {
-	FollowedBlogs []*Blog
+	FollowedBlogs map[int]*Blog
 	ReadPosts     map[int]map[int]bool //blogid -> postid
 }
 
 func (bs *BlogSubscription) Subscribe(b *Blog) {
-	bs.FollowedBlogs = append(bs.FollowedBlogs, b)
+	bs.FollowedBlogs[len(bs.FollowedBlogs)] = b
 	bs.ReadPosts[b.ID] = make(map[int]bool, len(b.Posts))
+}
+
+func (bs *BlogSubscription) Remove(cl FloatRange, subscriber Feature) {
+
+	nb := make(map[int]*Blog)
+	for _, blog := range bs.FollowedBlogs {
+		// get last post
+		p := blog.Posts[len(blog.Posts)-1]
+
+		sim := Similarity(subscriber, p.Message)
+		if sim > cl[0] {
+			// keep it
+
+			//nb = append(nb, blog)
+			nb[len(nb)] = blog
+		}
+	}
+	bs.FollowedBlogs = nb
 }
 
 func (bs *BlogSubscription) UnreadBlogPost() *Comment {
@@ -140,9 +158,11 @@ type EchoChamberAgent struct {
 	PStartBlogging   float64 `goabm:"hide"`
 	PWriteBlogPost   float64 `goabm:"hide"`
 	PRespondBlogPost float64 `goabm:"hide"`
-	POnline float64 `goabm:"hide"`
+	POnline          float64 `goabm:"hide"`
 
-	RSubscribedBlogs        IntRange   `goabm:"hide"`
+	RSubscribedBlogs IntRange `goabm:"hide"`
+
+	// if blog similarity < minConfort || > maxConfort, unsubscribe
 	RSimilarityConfortLevel FloatRange `goabm:"hide"`
 
 	// movement related
@@ -162,6 +182,13 @@ type EchoChamberAgent struct {
 // returns the culture as a string
 func (a *EchoChamberAgent) Culture() string {
 	return fmt.Sprintf("%v", a.Features)
+}
+
+func (a *EchoChamberAgent) MutateFeatures() {
+        i := rand.Intn(len(a.Features))
+        j := rand.Intn(a.Model.NTraits)
+        
+        a.Features[i] = j
 }
 
 func (a *EchoChamberAgent) ChangeFeatures(other Feature) {
@@ -189,9 +216,18 @@ func (a *EchoChamberAgent) FeatureInteraction(other Feature) bool {
 		// agents are already equal
 		return false
 	}
-	dice := rand.Float64()
+
 	//interact with sim% chance
-	if dice <= sim {
+	if goabm.RollDice(sim) {
+	        if a.Model.IsRuleActive("transmission_error") {
+	        // the feature will be changed randomly, with the inverse similarity probability
+	         np:= 1.0 - sim
+	         if goabm.RollDice(np) {
+	       // random feature change
+	                a.MutateFeatures()
+	                return true
+	         }
+	        }
 		a.ChangeFeatures(other)
 		return true
 	}
@@ -251,6 +287,11 @@ func (a *EchoChamberAgent) ReadBlogs() {
 			a.FindABlog()
 
 		}
+	}
+
+	// check if we like our blogs
+	if goabm.RollDice(0.4) {
+		a.MySubscriptions.Remove(a.RSimilarityConfortLevel, a.Features)
 	}
 
 	if len(a.MySubscriptions.FollowedBlogs) == 0 {
@@ -349,99 +390,14 @@ func (a *EchoChamberAgent) Act() {
 		a.VirtualInteraction()
 	}*/
 
-        if goabm.RollDice(a.POnline) {
-        a.VirtualInteraction()
-        } else {
-        other := a.GetRandomNeighbor()
-	if other != nil {
-		a.PhysicalInteraction(other.(*EchoChamberAgent))
+	if goabm.RollDice(a.POnline) {
+		a.VirtualInteraction()
+	} else {
+		other := a.GetRandomNeighbor()
+		if other != nil {
+			a.PhysicalInteraction(other.(*EchoChamberAgent))
+		}
 	}
-        }
-	/*
-
-	    var OtherIsOnline bool;
-	   //fmt.Printf("agent (%d - %d)\n",a.PAgent.(*goabm.FLWMAgent).Seqnr,a.VAgent.ID)
-	   var other *EchoChamberAgent
-	   // step 1: decide in which world we interact
-	   dicew:= rand.Float64()
-	   if dicew <= a.Model.POnline {
-
-	   // we are in the virtual world
-	   // 2.v.1 in vw decide whether looking for blogs
-	   // 2.v.2 select a blog & change traits
-	   diceb:= rand.Float64()
-	   if diceb <= a.Model.PLookingForBlogs {
-	   // first ditch all existing connections
-	   a.VAgent.ClearLinks()
-	   // find at most n(FollowedBlogs) most matching blogs
-	   // v1 exponentional exhaustive search, check every other agent
-	    similarities := make(map[float64]goabm.GenericAgent)
-	   var keys[]float64
-	   for _, pa := range *a.Model.Landscape.Overlay.GetAgents() {
-	    potentialAgent := pa.(*EchoChamberAgent)
-	    if potentialAgent.VAgent.ID != a.VAgent.ID { // no comparing with ourselve
-	    	sim := a.Similarity(potentialAgent)
-	    	similarities[sim] = potentialAgent.VAgent
-
-	    }
-	    //fmt.Println("nort: ", a.VAgent.ID, potentialAgent.VAgent.ID)
-	   }//(*goabm.NetworkLandscape).
-
-	   // sort the other agents according to similarities
-	   for k := range similarities {
-	       keys = append(keys, k)
-	   }
-	   // highes P first
-	   sort.Sort(sort.Reverse(sort.Float64Slice(keys)))
-
-	   // pick FollowedBlogs and connect in the virtual space
-
-	   for i:=0; i< a.Model.FollowedBlogs && i < len(keys);i++ {
-	   k := keys[i]
-	    blog := similarities[k]
-	   // fmt.Printf("%f\t",k)
-	    a.VAgent.ConnectTo(&blog)
-	   }
-
-	   }
-
-	   // select a blog random blog
-	   // chance to interact is its similarity
-	    randomLink := a.VAgent.GetRandomLink()
-	    if randomLink == nil {
-	     // there is no link at all might want to look for blogs next time??
-	     return
-	    }
-
-
-	    other = a.Model.Landscape.Overlay.GetAgentById(randomLink.ID + 0*goabm.AgentID( a.Model.Landscape.Base.(*goabm.FixedLandscapeWithMovement).NAgents)).(*EchoChamberAgent)
-	    		//sim := a.Similarity(other)
-	    		 //fmt.Printf("sim virtual: %f\n", sim)
-	    /*if other == nil {
-
-	    }*
-	   OtherIsOnline = true;
-	   	//other = a.VAgent.GetRandomNeighbor().(*EchoChamberAgent)
-	   } else {
-	   OtherIsOnline = false;
-	   // offline world
-	   // 2.p.1 in pw execute agent logic from axelrods culture model
-
-
-
-	   	neighbor := a.PAgent.GetRandomNeighbor()
-
-	   	if neighbor == nil {
-	                   // there is no agent around to interace :( maybe move a bit?
-	                    return
-	            } else {
-	            	other = neighbor.(*EchoChamberAgent)
-	            }
-	   }
-
-	   		// (ii) (a) selects a neighbor for cultural interaction
-
-	*/
 
 }
 
@@ -480,8 +436,8 @@ type EchoChamberModel struct {
 	RSubscribedBlogs        IntRange   `goabm:"hide"`
 	RSimilarityConfortLevel FloatRange `goabm:"hide"`
 	PRespondBlogPost        float64    `goabm:"hide"`
-	
-	POnline          float64    `goabm:"hide"`
+
+	POnline float64 `goabm:"hide"`
 
 	//movement parameters
 	Steplength float64 `goabm:"hide"`
@@ -490,10 +446,12 @@ type EchoChamberModel struct {
 	//datastructures
 	Blogger   map[goabm.AgentID]*Blog `goabm:"hide"`
 	Landscape goabm.Landscaper
+
+	goabm.Model
 }
 
 // helper function to determine the similarity between to features
-func (e *EchoChamberModel) Similarity(first, other Feature) float64 {
+func Similarity(first, other Feature) float64 {
 	c := float64(0.0)
 	// count equal traits, final score = shared traits/total traits
 	for i := range first {
@@ -522,7 +480,7 @@ func (e *EchoChamberModel) GoogleBlog(f Feature) *Blog {
 	for i, blog := range e.Blogger {
 
 		lastPost := blog.Posts[len(blog.Posts)-1]
-		sim := e.Similarity(f, lastPost.Message)
+		sim := Similarity(f, lastPost.Message)
 		ranking[i] = sim
 	}
 
@@ -541,6 +499,8 @@ func (e *EchoChamberModel) Init(l interface{}) {
 	e.Landscape = l.(goabm.Landscaper)
 
 	e.Blogger = make(map[goabm.AgentID]*Blog)
+
+	//e.Ruleset.Init()
 }
 
 func (a *EchoChamberModel) CreateAgent(agenter interface{}) goabm.Agenter {
@@ -559,9 +519,10 @@ func (a *EchoChamberModel) CreateAgent(agenter interface{}) goabm.Agenter {
 	agent.RSubscribedBlogs = a.RSubscribedBlogs
 	agent.PRespondBlogPost = a.PRespondBlogPost
 	agent.POnline = a.POnline
+	agent.RSimilarityConfortLevel = a.RSimilarityConfortLevel
 
 	agent.MySubscriptions.ReadPosts = make(map[int]map[int]bool)
-	agent.MySubscriptions.FollowedBlogs = make([]*Blog, 0)
+	agent.MySubscriptions.FollowedBlogs = make(map[int]*Blog)
 	agent.Model = a
 	return agent
 }
@@ -582,7 +543,7 @@ func (a *EchoChamberModel) BlogStatistics() {
 			// calculate the similarity of each comment to the blog
 
 			for _, c := range p.Responses {
-				sim := a.Similarity(p.Message, c)
+				sim := Similarity(p.Message, c)
 				if sim > 0.50 {
 					approve++
 				}
@@ -658,34 +619,40 @@ type SimRes struct {
 	OfflineInteraction int
 	TotalEchoChambers  int
 	EchoChamberRatio   float64
-	Events int
+	Events             int
 }
 
 func simRun(traits, features, size, numAgents, runs int,
 	probveloc, steplength, sight,
 	POnline, PLooking, PStartBlogging, PWriteBlogPost, PRespondBlogPost float64,
-	RSubscribedBlogs IntRange,
-	ret chan SimRes) {
+	RSubscribedBlogs IntRange, RSimilarityConfortLevel FloatRange,
+	ret chan SimRes, rules goabm.Ruleset) {
 
 	model := &EchoChamberModel{
-		NTraits:          traits,
-		NFeatures:        features,
-		PVeloc:           probveloc,
-		Steplength:       steplength,
-		PStartBlogging:   PStartBlogging,
-		PWriteBlogPost:   PWriteBlogPost,
-		PRespondBlogPost: PRespondBlogPost,
-		RSubscribedBlogs: RSubscribedBlogs,
-		POnline: POnline}
+		NTraits:                 traits,
+		NFeatures:               features,
+		PVeloc:                  probveloc,
+		Steplength:              steplength,
+		PStartBlogging:          PStartBlogging,
+		PWriteBlogPost:          PWriteBlogPost,
+		PRespondBlogPost:        PRespondBlogPost,
+		RSubscribedBlogs:        RSubscribedBlogs,
+		RSimilarityConfortLevel: RSimilarityConfortLevel,
+		POnline:                 POnline}
+		
+	model.Ruleset = rules
+	//fmt.Printf("rule: %v", rules)
+	
 
 	sim := &goabm.Simulation{Landscape: &goabm.FixedLandscapeWithMovement{Size: size, NAgents: numAgents, Sight: sight},
 		Model: model, Log: goabm.Logger{StdOut: false}}
 	sim.Init()
 
+
 	nvar := 100
-	r:= make([]float64,runs)
+	r := make([]float64, runs)
 	//last := 9.0
-	
+
 	for i := 0; i < runs; i++ {
 		//fmt.Printf("Step #%d, Events:%d, Cultures:%d\n", i, sim.Stats.Events, model.Cultures)
 		/*if model.Cultures == 1 {
@@ -694,25 +661,25 @@ func simRun(traits, features, size, numAgents, runs int,
 				break
 			}*/
 		sim.Step()
-                t := model.EchoChamberRatio
-              
-                        //last = t
-                        r[i] = t
-                        //fmt.Printf("%d %f %d\n",c,t,runs)
-                
-                // check for variance in last N steps
-                if i > nvar {
-                 slidingWindow := r[i-nvar:i]
-                 variance := stats.StatsSampleVariance(slidingWindow)
-                 //fmt.Printf("%f\n",variance)
-                 
-                 // if we have such a smal variance the model is considered
-                 // stable and we abort computation here to save cpu resources
-                 if variance < 0.000001 {
-                 //fmt.Printf("stop it at %d %f\n",i, variance)
-                 break
-                 }
-                }
+		t := model.EchoChamberRatio
+
+		//last = t
+		r[i] = t
+		//fmt.Printf("%d %f %d\n",c,t,runs)
+
+		// check for variance in last N steps
+		if i > nvar {
+			slidingWindow := r[i-nvar : i]
+			variance := stats.StatsSampleVariance(slidingWindow)
+			//fmt.Printf("%f\n",variance)
+
+			// if we have such a smal variance the model is considered
+			// stable and we abort computation here to save cpu resources
+			if variance < 0.000001 {
+				//fmt.Printf("stop it at %d %f\n",i, variance)
+				break
+			}
+		}
 	}
 	sim.Stop()
 
@@ -721,7 +688,7 @@ func simRun(traits, features, size, numAgents, runs int,
 		OfflineInteraction: model.OfflineInteraction,
 		TotalEchoChambers:  model.TotalEchoChambers,
 		EchoChamberRatio:   model.EchoChamberRatio,
-		Events: sim.Stats.Events}
+		Events:             sim.Stats.Events}
 }
 
 type DiscreteVarWithLimit struct {
@@ -730,34 +697,41 @@ type DiscreteVarWithLimit struct {
 	Max float64
 }
 
+type Range struct {
+	Var FloatRange
+	Min float64
+	Max float64
+}
+
 type Parameters struct {
 	Probabilities []float64
 	Discrete      []DiscreteVarWithLimit
+	Ranges        []Range
+	Rules         goabm.Ruleset
 }
 
 type TargetFunction interface {
 	Run(Parameters) float64
 }
 
-
 type MyTarget struct {
 }
 
 func (tf MyTarget) Run(p Parameters) float64 {
 
-        /*if len(p.Probabilities) != 3 {
-        fmt.Printf("%v",p)
-        //return 100.0
-        panic("len is not 3")
-        }*/
+	/*if len(p.Probabilities) != 3 {
+	  fmt.Printf("%v",p)
+	  //return 100.0
+	  panic("len is not 3")
+	  }*/
 	//PStartBlogging := p.Probabilities[0]
-	PWriteBlogPost := p.Probabilities[0]
+	MinConfort := p.Probabilities[0]
 	PRespondBlogPost := p.Probabilities[1]
 
 	POnline := p.Probabilities[1]
-	
-PStartBlogging := 0.1
 
+	PStartBlogging := 0.1
+	PWriteBlogPost := 0.3
 
 	features := 20
 	traits := 50
@@ -769,56 +743,54 @@ PStartBlogging := 0.1
 	steplength := 1.5
 	sight := 1.0
 
-
 	PLooking := 0.2
-
 
 	RSubscribedBlogs := IntRange{1, 5}
 
-        NCPU := 1
-        innerRuns := NCPU * 4 // multiple of NCPU!
-        runtime.GOMAXPROCS(NCPU)
-        scoreSum := 0.0
-        l := make([]float64,innerRuns)
-        
-        tevents := 0
-        //start := time.Now()
-        
-        
-        
-        resc := make( chan SimRes, NCPU)
-        
-        //dispatch workers
-        i:=0
-        for i<innerRuns {
-                for j:=0;j<NCPU;j++ {
-                        i++
-                       go simRun(traits, features, size, numAgents, runs,
-		probveloc, steplength, sight, POnline, PLooking,
-		PStartBlogging, PWriteBlogPost, PRespondBlogPost, RSubscribedBlogs,
-		resc)
+	RSimilarityConfortLevel := FloatRange{MinConfort, 1}
 
-                }
-        }
-        
+	NCPU := 1
+	innerRuns := NCPU * 4 // multiple of NCPU!
+	runtime.GOMAXPROCS(NCPU)
+	scoreSum := 0.0
+	l := make([]float64, innerRuns)
 
-        for i:=0;i<innerRuns;i++ {
-        
-        // collect results
-	r := <- resc
-	
-	ratio := r.EchoChamberRatio
-	target := 0.64
+	tevents := 0
+	//start := time.Now()
 
-        tevents += r.Events
-	score := math.Abs(target - ratio)
-        scoreSum+=score
-        l[i] = score
-        	//fmt.Printf("score: %f  ratio: %f\n", score, ratio)
-        }
-       /* usedTime := time.Since(start)
-        eps := float64(tevents) / usedTime.Seconds()
-        fmt.Printf("%f events/s\t",eps)*/
+	resc := make(chan SimRes, NCPU)
+
+	//dispatch workers
+	i := 0
+	for i < innerRuns {
+		for j := 0; j < NCPU; j++ {
+			i++
+			go simRun(traits, features, size, numAgents, runs,
+				probveloc, steplength, sight, POnline, PLooking,
+				PStartBlogging, PWriteBlogPost, PRespondBlogPost, RSubscribedBlogs,
+				RSimilarityConfortLevel,
+				resc,p.Rules)
+
+		}
+	}
+
+	for i := 0; i < innerRuns; i++ {
+
+		// collect results
+		r := <-resc
+
+		ratio := r.EchoChamberRatio
+		target := 0.64
+
+		tevents += r.Events
+		score := math.Abs(target - ratio)
+		scoreSum += score
+		l[i] = score
+		//fmt.Printf("score: %f  ratio: %f\n", score, ratio)
+	}
+	/* usedTime := time.Since(start)
+	   eps := float64(tevents) / usedTime.Seconds()
+	   fmt.Printf("%f events/s\t",eps)*/
 	return scoreSum / float64(innerRuns)
 }
 
@@ -832,16 +804,17 @@ func samplePS(initial Parameters, resolution float64) []Parameters {
 	for i := initial.Probabilities[0]; i < 1.0; i += resolution {
 		for j := initial.Probabilities[1]; j < 1.0; j += resolution {
 			for k := initial.Probabilities[2]; k < 1.0; k += resolution {
-				/*res[c].Probabilities[0] = i
-				res[c].Probabilities[1] = j
-
-				res[c].Probabilities[2] = k*/
 				//fmt.Printf("c: %d, i:%f j:%f, k:%f\n", c, i, j, k)
-				res[c].Probabilities = []float64{i, j,k}
+				res[c].Probabilities = []float64{i, j, k}
+				
+				res[c].Ranges = initial.Ranges
+				res[c].Rules = initial.Rules
+				res[c].Discrete = initial.Discrete
 				c++
 			}
 		}
 	}
+	
 	return res[:c]
 }
 
@@ -874,26 +847,30 @@ func main() {
 		sa.TF = mt
 		r := sa.Run()
 		fmt.Printf("best score %f for %v\n", r.Energy, r)*/
+	rules := goabm.Ruleset{}
+	rules.Init()
+	rules.SetRule("movement", true)
+	rules.SetRule("transmission_error", false)
 
-	p := Parameters{Probabilities: []float64{0.1, 0.1, 0.1}}
+	p := Parameters{Probabilities: []float64{0.1, 0.1, 0.1}, Rules: rules}
 	// parameter search
-	resolution := 0.2
+	resolution := 0.1
 
 	pars := samplePS(p, resolution)
 	fmt.Printf("size of ps: %d", len(pars))
 	mt := MyTarget{}
 	// run model for each parameter
-	fmt.Printf("run, score, writepost, respond, ponline\n")
+	fmt.Printf("run, score, minc, respond, ponline\n")
 	for i, p := range pars {
 
-                /*if 0 == p.Probabilities[0] {
+		/*if 0 == p.Probabilities[0] {
 		continue
 		}*/
 		r := mt.Run(p)
-		
+
 		fmt.Printf("%d,\t %f,\t %f,\t %f,\t %f\n", i, r, p.Probabilities[0],
-p.Probabilities[1],
-p.Probabilities[2],		)
+			p.Probabilities[1],
+			p.Probabilities[2])
 
 	}
 }
