@@ -5,6 +5,23 @@ import "goabm"
 import "fmt"
 import "math/rand"
 
+
+
+type DiscreteVarWithLimit struct {
+	Var float64
+	Min float64
+	Max float64
+}
+
+type Range struct {
+	Var FloatRange
+	Min float64
+	Max float64
+}
+
+
+type PF func() float64
+
 type Feature []int
 
 type Comment struct {
@@ -121,6 +138,9 @@ type EchoChamberAgent struct {
 	PStartBlogging   float64 `goabm:"hide"`
 	PWriteBlogPost   float64 `goabm:"hide"`
 	PRespondBlogPost float64 `goabm:"hide"`
+
+
+	PUnderstanding   float64 `goabm:"hide"`
 	POnline          float64 `goabm:"hide"`
 
 	RSubscribedBlogs IntRange `goabm:"hide"`
@@ -158,7 +178,16 @@ func (a *EchoChamberAgent) ChangeFeatures(other Feature) {
 	for i := range a.Features {
 		if a.Features[i] != other[i] {
 			//fmt.Printf("%d influenced %d\n", other.seqnr, a.seqnr)
-			a.Features[i] = other[i]
+			
+			if goabm.RollDice(a.PUnderstanding) {
+			// we understood the agent
+				a.Features[i] = other[i]
+			} else {
+			        // we didn't, but we still got influeced
+			     	j := rand.Intn(a.Model.NTraits)
+			     	a.Features[i] = j
+			}
+
 			/*if OtherIsOnline {
 			a.OnlineChangeCounter++;
 			} else {
@@ -261,6 +290,7 @@ func (a *EchoChamberAgent) ReadBlogs() {
 		// still no blogs available?
 		return
 	}
+	
 	// so we're subscribed to a bunch of blogs, let's pick a new post and read it
 	post := a.MySubscriptions.UnreadBlogPost()
 
@@ -275,9 +305,10 @@ func (a *EchoChamberAgent) ReadBlogs() {
 	if change {
 		a.OnlineInteraction++
 	}
+	
 	// now we read some responses, if there are any
 	if len(post.Responses) > 0 {
-
+	
 		numResponses := rand.Intn(len(post.Responses))
 		for i := 0; i < numResponses; i++ {
 			// and interact with them
@@ -343,16 +374,6 @@ func (a *EchoChamberAgent) Act() {
 		//fmt.Println("move...")
 	}
 
-	//l := a.Model.Landscape.(*goabm.FixedLandscapeWithMovement)
-	/*// check if we have agent around
-	other := a.GetRandomNeighbor()
-	if other != nil {
-		a.PhysicalInteraction(other.(*EchoChamberAgent))
-	} else {
-		// go online otherwise
-		a.VirtualInteraction()
-	}*/
-
 	if goabm.RollDice(a.POnline) {
 		a.VirtualInteraction()
 	} else {
@@ -389,18 +410,23 @@ type EchoChamberModel struct {
 	TotalEchoChambers  int
 	EchoChamberRatio   float64
 
+
 	//parameters
 	NTraits   int `goabm:"hide"` // don't show these in the stats'
 	NFeatures int `goabm:"hide"`
 
+        // pdf
+        PFAI PF
+        PFOnline PF
+        PFU PF
+
 	// blogging parameters
 	PStartBlogging          float64    `goabm:"hide"`
-	PWriteBlogPost          float64    `goabm:"hide"`
+
 	RSubscribedBlogs        IntRange   `goabm:"hide"`
 	RSimilarityConfortLevel FloatRange `goabm:"hide"`
-	PRespondBlogPost        float64    `goabm:"hide"`
 
-	POnline float64 `goabm:"hide"`
+
 
 	//movement parameters
 	Steplength float64 `goabm:"hide"`
@@ -465,15 +491,23 @@ func (a *EchoChamberModel) CreateAgent(agenter interface{}) goabm.Agenter {
 
 	agent.PStartBlogging = a.PStartBlogging
 	agent.PVeloc = a.PVeloc
-	agent.PWriteBlogPost = a.PWriteBlogPost
-	agent.RSubscribedBlogs = a.RSubscribedBlogs
-	agent.PRespondBlogPost = a.PRespondBlogPost
-	agent.POnline = a.POnline
-	agent.RSimilarityConfortLevel = a.RSimilarityConfortLevel
 
+	agent.RSubscribedBlogs = a.RSubscribedBlogs
+
+	agent.RSimilarityConfortLevel = a.RSimilarityConfortLevel
+	
+	// pdfs
+	agent.POnline = a.PFOnline()
+	agent.PRespondBlogPost = a.PFAI()
+	agent.PWriteBlogPost = agent.PRespondBlogPost
+	
+	agent.PUnderstanding = a.PFU()
+	
+	
 	agent.MySubscriptions.ReadPosts = make(map[int]map[int]bool)
 	agent.MySubscriptions.FollowedBlogs = make(map[int]*Blog)
 	agent.Model = a
+	//fmt.Printf("agent: %v\n",agent)
 	return agent
 }
 
