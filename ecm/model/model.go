@@ -179,7 +179,7 @@ func (a *EchoChamberAgent) ChangeFeatures(other Feature) {
 		if a.Features[i] != other[i] {
 			//fmt.Printf("%d influenced %d\n", other.seqnr, a.seqnr)
 			
-			if goabm.RollDice(a.PUnderstanding) {
+			if a.Model.RollDice(a.PUnderstanding) {
 			// we understood the agent
 				a.Features[i] = other[i]
 			} else {
@@ -210,11 +210,11 @@ func (a *EchoChamberAgent) FeatureInteraction(other Feature) bool {
 	}
 
 	//interact with sim% chance
-	if goabm.RollDice(sim) {
+	if a.Model.RollDice(sim) {
 		if a.Model.IsRuleActive("transmission_error") {
 			// the feature will be changed randomly, with the inverse similarity probability
 			np := 1.0 - sim
-			if goabm.RollDice(np) {
+			if a.Model.RollDice(np) {
 				// random feature change
 				a.MutateFeatures()
 				return true
@@ -275,14 +275,14 @@ func (a *EchoChamberAgent) ReadBlogs() {
 		a.FindABlog()
 	} else if numBlogs < a.RSubscribedBlogs[1] {
 		// we have still space more more blogs, add one with p=0.1
-		if goabm.RollDice(0.1) {
+		if a.Model.RollDice(0.1) {
 			a.FindABlog()
 
 		}
 	}
 
 	// check if we like our blogs
-	if goabm.RollDice(0.4) {
+	if a.Model.RollDice(0.4) {
 		a.MySubscriptions.Remove(a.RSimilarityConfortLevel, a.Features)
 	}
 
@@ -325,7 +325,7 @@ func (a *EchoChamberAgent) ReadBlogs() {
 
 	//fmt.Printf("r %f\n")
 
-	if goabm.RollDice(a.PRespondBlogPost) {
+	if a.Model.RollDice(a.PRespondBlogPost) {
 		// write comment
 		post.Respond(a.Features)
 
@@ -339,7 +339,7 @@ func (a *EchoChamberAgent) VirtualInteraction() {
 		// no we're not
 
 		//let's consider starting a blog
-		if goabm.RollDice(a.PStartBlogging) {
+		if a.Model.RollDice(a.PStartBlogging) {
 			// setup blog
 			a.MyBlog = a.Model.CreateBlog(a)
 
@@ -352,7 +352,7 @@ func (a *EchoChamberAgent) VirtualInteraction() {
 
 	} else {
 		// we have a blog
-		if goabm.RollDice(a.PWriteBlogPost) {
+		if a.Model.RollDice(a.PWriteBlogPost) {
 			// we blog
 			a.WriteBlog()
 			return
@@ -374,7 +374,7 @@ func (a *EchoChamberAgent) Act() {
 		//fmt.Println("move...")
 	}
 
-	if goabm.RollDice(a.POnline) {
+	if a.Model.RollDice(a.POnline) {
 		a.VirtualInteraction()
 	} else {
 		other := a.GetRandomNeighbor()
@@ -416,7 +416,8 @@ type EchoChamberModel struct {
 	NFeatures int `goabm:"hide"`
 
         // pdf
-        PFAI PF
+        PFExpressive PF
+        PFConsumptive PF
         PFOnline PF
         PFU PF
 
@@ -498,8 +499,9 @@ func (a *EchoChamberModel) CreateAgent(agenter interface{}) goabm.Agenter {
 	
 	// pdfs
 	agent.POnline = a.PFOnline()
-	agent.PRespondBlogPost = a.PFAI()
-	agent.PWriteBlogPost = agent.PRespondBlogPost
+	
+	agent.PRespondBlogPost = a.PFConsumptive()
+	agent.PWriteBlogPost = a.PFExpressive()
 	
 	agent.PUnderstanding = a.PFU()
 	
