@@ -349,20 +349,25 @@ func samplePS(initial Parameters, samples int) []Parameters {
         d1 := initial.Probabilities[0].α.Max - initial.Probabilities[0].α.Min
         d2 := initial.Probabilities[0].β.Max - initial.Probabilities[0].β.Min
         
-        comb := math.Log(float64(samples))+3
+        comb := math.Floor(math.Sqrt(float64(samples)))
 	step1 := d1 / comb
 	step2 := d2 / (comb)
 		
-	res := make([]Parameters, int(samples)+1000)
+	res := make([]Parameters, int(samples)+1)
 	
 	for i := 0; i < len(initial.Probabilities ); i++ {
 	        
 	}
 	//fmt.Printf("n: %f l: %d", n, len(res))
 	c := 0
+	//fmt.Printf("%d smaples, c: %f\n",samples, comb)
+	ci:=0
 	
-	for i := initial.Probabilities[0].α.Min; i < initial.Probabilities[0].α.Max; i += step1 {
-		for j := initial.Probabilities[0].β.Min; j < initial.Probabilities[0].β.Max; j += step2 {
+	for i := initial.Probabilities[0].α.Min; ci < int(comb); i += step1 {
+			ci++
+			cj:=0
+		for j := initial.Probabilities[0].β.Min; cj < int(comb); j += step2 {
+                        cj++
 		res[c].Probabilities = []BPFP{BPFP{α: DiscreteVarWithLimit{Var:i},β:DiscreteVarWithLimit{Var:j}}}
 		res[c].Ranges = initial.Ranges
 				res[c].Rules = initial.Rules
@@ -518,8 +523,8 @@ var memprofile = flag.String("memprofile", "", "write memory profile to this fil
         pfActiveInteraction := BPFP{α: DiscreteVarWithLimit{Min:0.5, Max: 7, Var:2} , 
         β: DiscreteVarWithLimit{Min:0.5, Max: 9, Var:2}}*/
         
-        pfUnderstanding := BPFP{α: DiscreteVarWithLimit{Min:0.5, Max: 100, Var:1.8}, 
-        β: DiscreteVarWithLimit{Min:0.5, Max: 100, Var:2.1}}
+        pfUnderstanding := BPFP{α: DiscreteVarWithLimit{Min:300, Max: 1150, Var:1.8}, 
+        β: DiscreteVarWithLimit{Min:1, Max: 500, Var:2.1}}     
         
         /*
         search space = 6 dimensions
@@ -528,7 +533,8 @@ var memprofile = flag.String("memprofile", "", "write memory profile to this fil
 	p := Parameters{Probabilities: []BPFP{/*pfOnline,pfActiveInteraction,*/pfUnderstanding,pfUnderstanding,pfUnderstanding}, Rules: rules}
 	
 	// parameter search
-	samples := 20
+	res:= 55
+	samples := res * res // best multiple of N^2
 
 	pars := samplePS(p, samples)
 	fmt.Printf("size of ps: %d", len(pars))
