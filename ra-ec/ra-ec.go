@@ -1,7 +1,7 @@
 package main
 
 import "math"
-import "goabm"
+import "github.com/nairboon/goabm"
 import "math/rand"
 import "fmt"
 
@@ -321,9 +321,10 @@ func simRun(MU, Uncertainty, POnline float64, N, runs, blogs, NComments int) flo
 				//fmt.Printf("agent%d,\t", j)
 			} else {
 
-				if agent.Writer {
-					//fmt.Printf("t(%f,%f)", agent.Blog.TopicMin, agent.Blog.TopicMax)
-				}
+				/*if agent.Writer {
+					fmt.Printf("t(%f,%f)", agent.Blog.TopicMin, agent.Blog.TopicMax)
+				}*/
+				
 				//fmt.Printf("%f,\t", agent.OpinionHistory[i])
 
 			}
@@ -339,27 +340,37 @@ func simRun(MU, Uncertainty, POnline float64, N, runs, blogs, NComments int) flo
 func main() {
 	goabm.Init()
 
-	ponline := 0.5
+	//simRun(2.3, 0.3, 0.5, 300, 700, 10, 10)
 
-	agents := 200
-	runs := 400
+	//return
+	//ponline := 0.5
+
+	agents := 300
+	runs := 700
 	blogs := 10
 
-	samplestep := 0.15
-
+	samplestep := 0.1
+        u:= 0.3
 	fmt.Printf("mu, ponline, deltares\n")
-	for mu := 1.6; mu < 3.0; mu += samplestep {
-		for po := 1; po < 20; po += 1 {
+	for mu := 2.5; mu < 2.6; mu += samplestep {
 
-			r := simRun(mu, 0.3, ponline, agents, runs, blogs, po)
+		rs := 0.0
+		for ir := 0.1; ir < 1.0; ir += 0.05 {
+
+			r := simRun(mu, u, ir, agents, runs, blogs, 10)
 			/*
 				d := math.Abs(r-0.64) * 10
 
 				e := d * d
 				if r < 0.64 {
 					e *= -1.0
-				}*/
-			fmt.Printf("%f, %d, %f\n", mu, po, r)
+			}*/
+			rs += r
+
+		        fmt.Printf("%f, %f, %f\n", mu, ir, r)
 		}
+		//avg := rs / float64(ir)
+		//fmt.Printf("%f, %f, %f\n", mu, ir, avg)
+
 	}
 }
